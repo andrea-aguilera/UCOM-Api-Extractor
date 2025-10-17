@@ -2,6 +2,13 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.5
 rapidfuzz==3.9.6
 
-#Dataset privado en HF
+# Lectura de Excel/CSV
+pandas==2.2.2
+openpyxl==3.1.5
+
+# Subida de archivos (form-data) en FastAPI
+python-multipart==0.0.9
+
+# Leer archivo privado desde Hugging Face Hub
 huggingface_hub==0.24.6
 requests==2.32.3
