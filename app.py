@@ -12,6 +12,10 @@ from huggingface_hub import hf_hub_download
 
 from extractor import extraer_meds_con_dosis
 
+# Cache escribible para Hugging Face Hub en Spaces
+HF_CACHE_DIR = os.getenv("HF_HUB_CACHE") or "/tmp/hf-cache"
+os.makedirs(HF_CACHE_DIR, exist_ok=True)
+
 # ==== Seguridad: APIKEY OBLIGATORIA (si falta, no arranca) ====
 API_KEY = os.getenv("APIKEY")
 if not API_KEY:
@@ -183,8 +187,9 @@ def extract_from_hub(
             repo_id=repo_id,
             filename=path,
             revision=revision,
-            token=token,
-            repo_type="dataset"      # <<<<<< CLAVE
+            token=os.getenv("HFTOKEN"),
+            repo_type="dataset",
+            cache_dir=HF_CACHE_DIR
         )
     except Exception as e:
         raise HTTPException(400, f"No pude descargar {repo_id}/{path}: {e}")
