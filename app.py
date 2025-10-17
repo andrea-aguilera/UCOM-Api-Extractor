@@ -164,30 +164,50 @@ def extract_upload(
         raise HTTPException(400, "out_format debe ser 'json' o 'csv'")
 
 # ==== Lectura desde Hugging Face Hub (dataset privado) ====
+
 @app.post("/extract/from_hub")
 def extract_from_hub(
-    repo_id: str = Query("ama388/ucom-dataset", description="Dataset repo en HF, ej: ama388/ucom-dataset"),
-    path: str = Query(..., description="Ruta del archivo dentro del repo, ej: datos.xlsx"),
+    repo_id: str = Query("ama388/ucom-dataset", description="Dataset repo en HF"),
+    path: str = Query(..., description="Ruta del archivo dentro del repo, ej: datos.xlsx o carpeta/datos.xlsx"),
     revision: str = Query("main"),
     include_span: bool = Query(False),
     first_per_med: bool = Query(True),
     out_format: str = Query("json")
 ):
-    token = os.getenv("HFTOKEN") or os.getenv("HFTOKEN")  # un solo nombre, repetido por claridad
+    token = os.getenv("HFTOKEN")
     if not token:
-        raise HTTPException(500, "Falta el secreto HFTOKEN en el Space (Settings → Repository secrets).")
+        raise HTTPException(500, "Falta el secreto HFTOKEN en el Space.")
 
-    local_path = hf_hub_download(repo_id=repo_id, filename=path, revision=revision, token=token)
-    with open(local_path, "rb") as f:
-        content = f.read()
+    try:
+        local_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=path,
+            revision=revision,
+            token=token,
+            repo_type="dataset"      # <<<<<< CLAVE
+        )
+    except Exception as e:
+        raise HTTPException(400, f"No pude descargar {repo_id}/{path}: {e}")
 
-    df = _read_table_bytes(content)
-    records = _df_to_records(df)
+    try:
+        with open(local_path, "rb") as f:
+            content = f.read()
+        df = _read_table_bytes(content)
+    except Exception as e:
+        raise HTTPException(400, f"No pude leer el archivo como Excel/CSV: {e}")
+
+    try:
+        records = _df_to_records(df)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Formato inesperado: {e}")
+
     resultados = _procesar_registros(records, include_span, first_per_med)
-
     if out_format == "json":
         return resultados
 
+    import io, csv
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=resultados[0].keys() if resultados else [])
     if resultados: writer.writeheader()
