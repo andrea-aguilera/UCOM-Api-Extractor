@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import os, io, csv, json
+import os, io, csv
 from typing import Optional, List, Dict, Any
 
 import pandas as pd
@@ -10,18 +10,18 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from huggingface_hub import hf_hub_download
 
-from extractor import extraer_meds_con_dosis
+from extractor import extraer_meds_con_dosis, extraer_info_plan
 
 # Cache escribible para Hugging Face Hub en Spaces
 HF_CACHE_DIR = os.getenv("HF_HUB_CACHE") or "/tmp/hf-cache"
 os.makedirs(HF_CACHE_DIR, exist_ok=True)
 
-# ==== Seguridad: APIKEY OBLIGATORIA (si falta, no arranca) ====
-API_KEY = os.getenv("APIKEY")
+# ==== Seguridad: APIKEY OBLIGATORIA (si falta, no funciona) ====
+API_KEY = os.getenv("APIKEY") or os.getenv("API_KEY")
 if not API_KEY:
     raise RuntimeError(
         "APIKEY no configurada. Ve a tu Space → Settings → Repository secrets → "
-        "crea el secreto 'APIKEY' con tu clave."
+        "crea el secreto 'APIKEY' (o 'API_KEY') con tu clave."
     )
 
 def check_api_key(x_api_key: Optional[str] = Header(default=None, alias="X-API-Key")):
@@ -32,6 +32,12 @@ def check_api_key(x_api_key: Optional[str] = Header(default=None, alias="X-API-K
 class TextExtractionRequest(BaseModel):
     text: str
     include_span: bool = False
+
+class TextFullExtractionRequest(BaseModel):
+    text: str
+    fecha_consulta: Optional[str] = None
+    include_span: bool = False
+    first_per_med: bool = True
 
 class Record(BaseModel):
     ID_paciente: str
@@ -45,7 +51,8 @@ class RecordsExtractionRequest(BaseModel):
 
 # ==== Utilidades ====
 def first_per_med(extracciones: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    seen = set(); out: List[Dict[str, Any]] = []
+    seen = set()
+    out: List[Dict[str, Any]] = []
     for x in sorted(extracciones, key=lambda d: (d.get("pos") if d.get("pos") is not None else 10**9)):
         med = x.get("med")
         if med and med not in seen:
@@ -58,22 +65,43 @@ def first_per_med(extracciones: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _procesar_registros(records: List[Dict[str, Any]], include_span: bool, first_per_med_flag: bool) -> List[Dict[str, Any]]:
     resultados: List[Dict[str, Any]] = []
     for r in records:
-        extr = extraer_meds_con_dosis(r["relato_consulta"], incluir_span=include_span)
+        # Info de PLAN a nivel consulta
+        plan_info = extraer_info_plan(r.get("relato_consulta", ""), r.get("fecha_consulta"))
+
+        # Extracción meds
+        extr = extraer_meds_con_dosis(r.get("relato_consulta", ""), incluir_span=include_span)
         if first_per_med_flag:
             extr = first_per_med(extr)
+
+        # Si NO querés perder consultas sin medicación, descomentá este bloque:
+        # if not extr:
+        #     resultados.append({
+        #         "ID_paciente": r.get("ID_paciente"),
+        #         "fecha_consulta": r.get("fecha_consulta"),
+        #         "riesgo": r.get("riesgo"),
+        #         "relato_consulta": r.get("relato_consulta"),
+        #         "med": None, "alias": None, "alias_ocr": None, "dosis": None,
+        #         "esquema": None, "esquema_cambio": None, "pos": None,
+        #         **plan_info
+        #     })
+
         for h in extr:
             resultados.append({
-                "ID_paciente": r["ID_paciente"],
-                "fecha_consulta": r["fecha_consulta"],
+                "ID_paciente": r.get("ID_paciente"),
+                "fecha_consulta": r.get("fecha_consulta"),
                 "riesgo": r.get("riesgo"),
-                "relato_consulta": r["relato_consulta"],
+                "relato_consulta": r.get("relato_consulta"),
+
                 "med": h.get("med"),
                 "alias": h.get("alias"),
                 "alias_ocr": h.get("alias_ocr"),
                 "dosis": h.get("dosis"),
                 "esquema": h.get("esquema"),
+                "esquema_cambio": h.get("esquema_cambio"),
                 "pos": h.get("pos"),
+
                 **({"span": h.get("span"), "contexto": h.get("contexto")} if include_span else {}),
+                **plan_info,
             })
     return resultados
 
@@ -85,18 +113,17 @@ def _read_table_bytes(content: bytes, sheet=None) -> pd.DataFrame:
         return pd.read_csv(io.StringIO(content.decode("utf-8")), dtype=str).fillna("")
 
 def _df_to_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
-    cols_req = {"ID_paciente","fecha_consulta","relato_consulta","riesgo"}
-    if not cols_req.issubset(set(df.columns)):
+    cols_req = ["ID_paciente", "fecha_consulta", "relato_consulta", "riesgo"]
+    if not set(cols_req).issubset(set(df.columns)):
         raise HTTPException(400, f"El archivo debe tener columnas {cols_req}")
-    # mantener orden
-    return df[list(cols_req)].to_dict(orient="records")
+    return df[cols_req].to_dict(orient="records")
 
 # ==== App con guardia global de API key ====
-app = FastAPI(title="Extractor de relatos clínicos", version="1.2.0", dependencies=[Depends(check_api_key)])
+app = FastAPI(title="Extractor de relatos clínicos", version="1.3.0", dependencies=[Depends(check_api_key)])
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Ajusta a tu dominio si lo conoces
+    allow_origins=["*"],  # Ajustar al dominio
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -109,7 +136,16 @@ def health():
 
 @app.post("/extract/text")
 def extract_text(req: TextExtractionRequest):
+    # compat: devuelve SOLO lista de meds
     return extraer_meds_con_dosis(req.text, incluir_span=req.include_span)
+
+@app.post("/extract/full")
+def extract_full(req: TextFullExtractionRequest):
+    meds_out = extraer_meds_con_dosis(req.text, incluir_span=req.include_span)
+    if req.first_per_med:
+        meds_out = first_per_med(meds_out)
+    plan_out = extraer_info_plan(req.text, req.fecha_consulta)
+    return {"meds": meds_out, "plan": plan_out}
 
 @app.post("/extract/records")
 def extract_records(
@@ -119,6 +155,7 @@ def extract_records(
 ):
     if out_format not in {"json", "csv"}:
         raise HTTPException(status_code=400, detail="out_format debe ser 'json' o 'csv'")
+
     records = [r.model_dump() for r in req.records]
     resultados = _procesar_registros(records, req.include_span, first_per_med_flag)
 
@@ -126,11 +163,21 @@ def extract_records(
         return resultados
 
     buf = io.StringIO()
-    cols = ["ID_paciente","fecha_consulta","riesgo","relato_consulta","med","alias","alias_ocr","dosis","esquema","pos"]
-    if req.include_span: cols += ["span","contexto"]
+    cols = [
+        "ID_paciente","fecha_consulta","riesgo","relato_consulta",
+        "med","alias","alias_ocr","dosis","esquema","esquema_cambio","pos",
+        "PLAN_psicoeducacion","PLAN_psicoterapia","PLAN_psico_unificado",
+        "PLAN_prox_control_texto","PLAN_reposicion_medicacion",
+        "REPO_medicacion","PLAN_cambio_esquema",
+        "PLAN_texto_limpio",
+    ]
+    if req.include_span:
+        cols += ["span", "contexto"]
+
     writer = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
     writer.writeheader()
-    for row in resultados: writer.writerow(row)
+    for row in resultados:
+        writer.writerow(row)
     buf.seek(0)
     return StreamingResponse(iter([buf.read()]), media_type="text/csv")
 
@@ -159,16 +206,17 @@ def extract_upload(
         return resultados
     elif out_format == "csv":
         buf = io.StringIO()
-        writer = csv.DictWriter(buf, fieldnames=resultados[0].keys() if resultados else [])
-        if resultados: writer.writeheader()
-        for row in resultados: writer.writerow(row)
+        writer = csv.DictWriter(buf, fieldnames=list(resultados[0].keys()) if resultados else [])
+        if resultados:
+            writer.writeheader()
+        for row in resultados:
+            writer.writerow(row)
         buf.seek(0)
         return StreamingResponse(iter([buf.read()]), media_type="text/csv")
     else:
         raise HTTPException(400, "out_format debe ser 'json' o 'csv'")
 
 # ==== Lectura desde Hugging Face Hub (dataset privado) ====
-
 @app.post("/extract/from_hub")
 def extract_from_hub(
     repo_id: str = Query("ama388/ucom-dataset", description="Dataset repo en HF"),
@@ -212,11 +260,12 @@ def extract_from_hub(
     if out_format == "json":
         return resultados
 
-    import io, csv
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=resultados[0].keys() if resultados else [])
-    if resultados: writer.writeheader()
-    for row in resultados: writer.writerow(row)
+    writer = csv.DictWriter(buf, fieldnames=list(resultados[0].keys()) if resultados else [])
+    if resultados:
+        writer.writeheader()
+    for row in resultados:
+        writer.writerow(row)
     buf.seek(0)
     return StreamingResponse(iter([buf.read()]), media_type="text/csv")
 
