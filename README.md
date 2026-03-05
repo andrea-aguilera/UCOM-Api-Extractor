@@ -1,5 +1,10 @@
 # UCOM-Api-Extractor
-API (FastAPI + Docker) para acceder al Extractor de Medicación y Posología (dosis y esquema) de relatos de consultas médicas en español de pacientes anonimizados diagnosticados con depresión, de un Hospital Psiquiátrica en Asunción, Paraguay.
+
+API (FastAPI + Docker) para extraer información de relatos clínicos en español.
+
+Incluye:
+- **Medicaciones**: medicamento + dosis + esquema
+- **PLAN (a nivel consulta)**: psicoterapia/psicoeducación, reposición de medicación, próximo control, cambio de esquema
 
 ---
 
@@ -17,8 +22,8 @@ UCOM-Api-Extractor/
 
 ## Requisitos
 
-* **Docker** instalado (Windows/macOS/Linux).
-  
+- **Docker** instalado (Windows/macOS/Linux).
+
 ---
 
 ## Ejecutar localmente (Docker)
@@ -27,22 +32,22 @@ Construir imagen:
 
 ```bash
 docker build -t extractor-api .
-```
 
 Correr contenedor:
 
-```bash
 docker run -p 7860:7860 \
   -e PORT=7860 \
-  -e API_KEY=<API_KEY> \
+  -e APIKEY=<TU_API_KEY> \
   extractor-api
-```
+
 
 Swagger UI (docs):
-`http://localhost:7860/docs`
+http://localhost:7860/docs
 
-> Todas las solicitudes deben incluir el header:
-> `X-API-Key: <API_KEY>`
+Todas las solicitudes deben incluir el header:
+X-API-Key: <TU_API_KEY>
+
+---
 
 ## Endpoints (resumen)
 
@@ -52,47 +57,86 @@ Swagger UI (docs):
   * Body (JSON):
 
     ```json
-    { "text": "clonazepam 0.5 mg 0.0.1", "include_span": false }
+    { "text": "clonazepam 0.5 mg 0.0.1 por 7 dias luego 0.0.0", "include_span": false }
     ```
-* `POST /extract/records`
+    Salida: lista de dicts con (según exista): med, dosis, esquema, esquema_cambio, ...
 
-  * Query: `first_per_med=true|false`, `out_format=json|csv`
+* `POST /extract/full`
+Devuelve medicaciones + plan:
+
   * Body (JSON):
 
-    ```json
+    { "text": "PLAN: psicoterapia... clonazepam 0.5 mg 0.0.1 ... control en 15 dias", "include_span": false, "first_per_med": true }
+
+    Salida:
+
+      {
+  "meds": [ ... ],
+  "plan": {
+    "PLAN_psico_unificado": "Sí|No se encuentra dato",
+    "PLAN_prox_control_texto": "en 15 dias|el 10/11/2025|No se encuentra dato",
+    "PLAN_reposicion_medicacion": "Sí|No se encuentra dato",
+    "REPO_medicacion": "Sí|No se encuentra dato",
+    "PLAN_cambio_esquema": "Sí|No se encuentra dato",
+    "PLAN_texto_limpio": "..."
+  }
+}
+
+* `POST /extract/records`
+
+Procesa múltiples registros. Salida una fila por medicamento y además agrega columnas del PLAN (repetidas en cada fila de esa consulta).
+
+Query:
+
+* first_per_med=true|false
+
+* out_format=json|csv
+
+* Body (JSON):
+
+{
+  "records": [
     {
-      "records": [
-        {"ID_paciente":"P001","fecha_consulta":"2025-01-10","relato_consulta":"quetiapina 25 mg 0.0.1","riesgo":"bajo"}
-      ],
-      "include_span": false
+      "ID_paciente":"P001",
+      "fecha_consulta":"2025-01-10",
+      "relato_consulta":"PLAN: psicoterapia... quetiapina 25 mg 0.0.1 ... control en 15 dias",
+      "riesgo":"bajo"
     }
-    ```
+  ],
+  "include_span": false
+}
+
 * `POST /extract/upload` (CSV/Excel)
 
   * form-data: `file=@archivo.xlsx`
   * Query: `include_span`, `first_per_med`, `out_format=json|csv`
-* `POST /extract/from_drive`
 
-  * Query: `file_id=<FILE_ID>`, `sheet=<opcional>`, `include_span`, `first_per_med`, `out_format=json|csv`
+* `POST /extract/from_hub` (Hugging Face Hub dataset privado)
+
+Query:
+
+* repo_id (default: ama388/ucom-dataset)
+* path (ruta del archivo dentro del repo)
+* revision (default: main)
+* include_span, first_per_med, out_format=json|csv
 
 **Columnas esperadas** en CSV/Excel:
 `ID_paciente, fecha_consulta, relato_consulta, riesgo`
 
+
 ## Variables de entorno
 
-* `API_KEY`  *(obligatoria; la API no arranca si falta)*
-* `GDRIVE_SA_JSON` *(contenido JSON del Service Account para Google Drive; requerido si se usa `/extract/from_drive`)*
-* `GDRIVE_FILE_ID_DEFAULT` *(opcional)*
+* `APIKEY`  *(obligatoria; también se acepta API_KEY)*
+* `HFTOKEN` (obligatoria si se usa /extract/from_hub)
 
 ## Despliegue en Hugging Face Spaces (Docker)
 
 1. Crear Space con **SDK: Docker**.
 2. Subir a la raíz: `Dockerfile`, `app.py`, `extractor.py`, `requirements.txt`.
 3. En **Settings → Repository secrets**:
-
-   * `API_KEY`
-   * (opcional) `GDRIVE_SA_JSON` y `GDRIVE_FILE_ID_DEFAULT`
-4. Esperar build y probar: `https://<tu-space>.hf.space/health` (con `X-API-Key`).
+   * `API_KEY` (o APIKEY)
+   * `HFTOKEN` (si se usa /extract/from_hub)
+4. Probar: `https://<tu-space>.hf.space/health` (con `X-API-Key`).
 
 ## Seguridad y privacidad
 
