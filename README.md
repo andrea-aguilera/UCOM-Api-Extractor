@@ -8,12 +8,13 @@ Incluye:
 
 ## Estructura
 
+```bash
 UCOM-Api-Extractor/
 ├─ app.py
 ├─ extractor.py
 ├─ requirements.txt
 └─ Dockerfile
-
+```
 
 ## Requisitos
 
