@@ -1,4 +1,3 @@
-```md
 # UCOM-Api-Extractor
 
 API (FastAPI + Docker) para extraer información de relatos clínicos en español.
@@ -6,8 +5,6 @@ API (FastAPI + Docker) para extraer información de relatos clínicos en españo
 Incluye:
 - **Medicaciones**: medicamento + dosis + esquema + **esquema_cambio**
 - **PLAN (a nivel consulta)**: psicoterapia/psicoeducación, reposición de medicación, próximo control, cambio de esquema
-
----
 
 ## Estructura
 
@@ -20,8 +17,6 @@ UCOM-Api-Extractor/
 └─ Dockerfile
 
 ````
-
----
 
 ## Requisitos
 
