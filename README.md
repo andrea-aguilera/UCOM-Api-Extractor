@@ -8,21 +8,17 @@ Incluye:
 
 ## Estructura
 
-```
-
 UCOM-Api-Extractor/
 ├─ app.py
 ├─ extractor.py
 ├─ requirements.txt
 └─ Dockerfile
 
-````
 
 ## Requisitos
 
 - **Docker** instalado (Windows/macOS/Linux).
 
----
 
 ## Ejecutar localmente (Docker)
 
@@ -46,8 +42,6 @@ Swagger UI (docs):
 
 > Todas las solicitudes deben incluir el header:
 > `X-API-Key: <TU_API_KEY>`
-
----
 
 ## Endpoints (resumen)
 
@@ -133,13 +127,10 @@ Query:
 * `revision` (default: `main`)
 * `include_span`, `first_per_med`, `out_format=json|csv`
 
----
-
 ## Columnas esperadas en CSV/Excel
 
 `ID_paciente, fecha_consulta, relato_consulta, riesgo`
 
----
 
 ## Variables de entorno
 
@@ -147,7 +138,6 @@ Query:
   (También se acepta `API_KEY` si la definís así.)
 * `HFTOKEN` *(obligatoria solo si usas `/extract/from_hub`)*
 
----
 
 ## Despliegue en Hugging Face Spaces (Docker)
 
@@ -160,8 +150,7 @@ Query:
 4. Probar:
 
    * `https://<tu-space>.hf.space/health` (con header `X-API-Key`)
-
----
+     
 
 ## Seguridad y privacidad
 
